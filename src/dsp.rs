@@ -1,5 +1,5 @@
 use rustfft::{num_complex::Complex, FftPlanner};
-use std::sync::Arc;
+use std::{f32::consts::PI, sync::Arc};
 
 const FFT_SIZE: usize = 2048;
 const HOP_SIZE: usize = 1024;
@@ -93,7 +93,7 @@ impl DspProcessor {
         let window: Vec<f32> = (0..FFT_SIZE)
             .map(|i| {
                 let n = i as f32;
-                let w = std::f32::consts::PI * 2.0 * n / (FFT_SIZE as f32 - 1.0);
+                let w = PI * 2.0 * n / (FFT_SIZE as f32 - 1.0);
                 1.0 - 1.942604 * (w).cos() + 1.340318 * (2.0 * w).cos() - 0.440811 * (3.0 * w).cos()
                     + 0.043097 * (4.0 * w).cos()
             })

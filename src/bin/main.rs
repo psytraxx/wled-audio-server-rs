@@ -1,10 +1,11 @@
 use clap::Parser;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use wled_audio_server::audio::open_capture_stream;
-use wled_audio_server::dsp;
-use wled_audio_server::packet::{self, UdpSender};
+use wled_audio_server::dsp::DspProcessor;
+use wled_audio_server::packet::{AudioSyncPacketV2, UdpSender};
 
 #[derive(Parser)]
 #[command(
@@ -80,7 +81,7 @@ fn main() {
     }
     println!("Press Ctrl+C to stop.");
 
-    let mut dsp = dsp::DspProcessor::new(sample_rate);
+    let mut dsp = DspProcessor::new(sample_rate);
     let mut last_drop_check = Instant::now();
     let mut last_drop_count: u64 = 0;
     let mut packet_count: u64 = 0;
@@ -101,7 +102,7 @@ fn main() {
 
                 let frames = dsp.push_samples(&samples);
                 for frame in frames {
-                    let pkt = packet::AudioSyncPacketV2 {
+                    let pkt = AudioSyncPacketV2 {
                         sample_raw: frame.sample_raw,
                         sample_smth: frame.sample_smth,
                         sample_peak: frame.sample_peak,
@@ -131,7 +132,7 @@ fn main() {
                     }
                 }
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            Err(RecvTimeoutError::Timeout) => {
                 // Check for dropped frames every 5 seconds
                 if last_drop_check.elapsed() >= Duration::from_secs(5) {
                     let current_drops = drop_counter.load(Ordering::Relaxed);
@@ -147,7 +148,7 @@ fn main() {
                 }
                 continue;
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Disconnected) => break,
         }
     }
 
