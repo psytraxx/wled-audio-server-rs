@@ -1,6 +1,25 @@
 use std::net::{SocketAddr, UdpSocket};
 
 /// V2 AudioSync packet for WLED AudioReactive (44 bytes, little-endian).
+///
+/// This structure represents the WLED AudioSync V2 protocol packet format.
+/// When serialized, it produces exactly 44 bytes suitable for UDP transmission
+/// to WLED devices running AudioReactive firmware.
+///
+/// # Packet Format
+/// ```text
+/// Offset  Size  Type      Field
+/// 0       6     [u8;6]    header = "00002\0"
+/// 6       2     [u8;2]    pressure (unused, zero)
+/// 8       4     f32       sampleRaw (0..255)
+/// 12      4     f32       sampleSmth (0..255)
+/// 16      1     u8        samplePeak (0=no beat, 1=beat)
+/// 17      1     u8        frameCounter (0..255 rolling)
+/// 18      16    [u8;16]   fftResult (16 bins, each 0..255)
+/// 34      2     u16       zeroCrossingCount
+/// 36      4     f32       FFT_Magnitude
+/// 40      4     f32       FFT_MajorPeak (Hz)
+/// ```
 pub struct AudioSyncPacketV2 {
     pub sample_raw: f32,
     pub sample_smth: f32,
@@ -12,6 +31,13 @@ pub struct AudioSyncPacketV2 {
 }
 
 impl AudioSyncPacketV2 {
+    /// Serializes the packet to a 44-byte array in WLED V2 format.
+    ///
+    /// # Arguments
+    /// * `frame_counter` - Rolling frame counter (0-255) for packet sequencing
+    ///
+    /// # Returns
+    /// A 44-byte array ready for UDP transmission, with all fields in little-endian byte order.
     pub fn to_bytes(&self, frame_counter: u8) -> [u8; 44] {
         let mut buf = [0u8; 44];
 
@@ -54,6 +80,10 @@ impl AudioSyncPacketV2 {
     }
 }
 
+/// UDP packet sender with automatic frame counter management.
+///
+/// Manages a UDP socket and maintains a rolling frame counter
+/// for AudioSync packet transmission to WLED devices.
 pub struct UdpSender {
     socket: UdpSocket,
     target: SocketAddr,
@@ -61,6 +91,15 @@ pub struct UdpSender {
 }
 
 impl UdpSender {
+    /// Creates a new UDP sender bound to an ephemeral port.
+    ///
+    /// # Arguments
+    /// * `target_ip` - Target IP address (IPv4 format, e.g., "192.168.1.100")
+    /// * `port` - Target UDP port (typically 11988 for WLED AudioReactive)
+    ///
+    /// # Returns
+    /// * `Ok(UdpSender)` - Ready-to-use sender with frame counter initialized to 0
+    /// * `Err(io::Error)` - If socket binding or address parsing fails
     pub fn new(target_ip: &str, port: u16) -> std::io::Result<Self> {
         let socket = UdpSocket::bind("0.0.0.0:0")?;
         let target: SocketAddr = format!("{target_ip}:{port}").parse().map_err(|e| {
@@ -73,6 +112,16 @@ impl UdpSender {
         })
     }
 
+    /// Sends an AudioSync packet to the target WLED device.
+    ///
+    /// Automatically increments the internal frame counter after each send.
+    ///
+    /// # Arguments
+    /// * `packet` - The packet to serialize and transmit
+    ///
+    /// # Returns
+    /// * `Ok(())` - Packet sent successfully
+    /// * `Err(io::Error)` - If UDP transmission fails
     pub fn send(&mut self, packet: &AudioSyncPacketV2) -> std::io::Result<()> {
         let bytes = packet.to_bytes(self.frame_counter);
         self.socket.send_to(&bytes, self.target)?;

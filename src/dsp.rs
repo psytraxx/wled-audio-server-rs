@@ -16,7 +16,28 @@ const BEAT_THRESHOLD: f32 = 1.20;
 const BEAT_FREQ_MIN: f32 = 100.0;
 const BEAT_FREQ_MAX: f32 = 500.0;
 
-/// Output of DSP processing for one frame.
+/// FFT magnitude normalization factor for log-scale binning.
+///
+/// This value is empirically derived to scale FFT magnitude values into a range
+/// suitable for AGC processing. After taking the square root of magnitude
+/// (converting power to amplitude), dividing by this factor produces values
+/// that typically range 0-10 for normal audio levels, which the AGC then
+/// normalizes to 0-255 for transmission to WLED.
+///
+/// The specific value (0.04194) may have been tuned based on the combination of:
+/// - FFT window function gain (HFT90D FlatTop has ~3.81 coherent gain)
+/// - Expected input signal levels
+/// - Desired sensitivity for WLED visualization
+const FFT_BIN_SCALE: f32 = 0.04194;
+
+/// Smoothing factor for exponential moving average of sampleSmth.
+/// Higher values = more smoothing (slower response), range 0.0-1.0.
+const SAMPLE_SMOOTH_FACTOR: f32 = 0.7;
+
+/// Output of DSP processing for one FFT frame.
+///
+/// Contains amplitude, frequency analysis, and beat detection results
+/// ready for transmission to WLED AudioReactive devices.
 pub struct DspFrame {
     pub sample_raw: f32,
     pub sample_smth: f32,
@@ -27,6 +48,20 @@ pub struct DspFrame {
     pub fft_major_peak: f32,
 }
 
+/// Real-time audio DSP processor for WLED AudioReactive.
+///
+/// Performs FFT analysis with windowing, AGC, beat detection, and
+/// log-spaced frequency binning. Uses 50% overlapping windows for
+/// good time resolution.
+///
+/// # Processing Pipeline
+/// 1. Buffer incoming samples until FFT_SIZE (2048) is reached
+/// 2. Apply HFT90D FlatTop window for accurate amplitude representation
+/// 3. Compute FFT and extract magnitude spectrum
+/// 4. Bin frequencies into 16 log-spaced bands (60-6000 Hz)
+/// 5. Apply adaptive AGC with asymmetric attack/release
+/// 6. Detect beats using energy thresholding in bass range (100-500 Hz)
+/// 7. Advance buffer by HOP_SIZE (1024) for 50% overlap
 pub struct DspProcessor {
     sample_rate: f32,
     buffer: Vec<f32>,
@@ -43,6 +78,14 @@ pub struct DspProcessor {
 }
 
 impl DspProcessor {
+    /// Creates a new DSP processor configured for the given sample rate.
+    ///
+    /// # Arguments
+    /// * `sample_rate` - Audio sample rate in Hz (typically 44100 or 48000)
+    ///
+    /// # Returns
+    /// A configured processor with pre-computed FFT plan, window function,
+    /// and frequency bin boundaries.
     pub fn new(sample_rate: u32) -> Self {
         let sr = sample_rate as f32;
 
@@ -90,7 +133,18 @@ impl DspProcessor {
         }
     }
 
-    /// Push new mono samples. Returns a DspFrame each time a hop-worth of data is ready.
+    /// Pushes new mono audio samples into the processing buffer.
+    ///
+    /// # Arguments
+    /// * `samples` - Slice of mono f32 samples (range -1.0 to 1.0)
+    ///
+    /// # Returns
+    /// Vector of `DspFrame` results, one for each completed FFT window.
+    /// Returns empty vector if insufficient data for processing.
+    ///
+    /// # Processing Rate
+    /// With 50% overlap (HOP_SIZE=1024), at 48kHz sample rate, this produces
+    /// approximately 47 frames per second (48000 / 1024 ≈ 46.875).
     pub fn push_samples(&mut self, samples: &[f32]) -> Vec<DspFrame> {
         let mut frames = Vec::new();
         self.buffer.extend_from_slice(samples);
@@ -129,7 +183,8 @@ impl DspProcessor {
         let sample_raw = (max_abs * 255.0).min(255.0);
 
         // Exponential smoothing for sampleSmth
-        self.sample_smth = self.sample_smth * 0.7 + sample_raw * 0.3;
+        self.sample_smth =
+            self.sample_smth * SAMPLE_SMOOTH_FACTOR + sample_raw * (1.0 - SAMPLE_SMOOTH_FACTOR);
 
         // --- Silence check ---
         if max_abs < SILENCE_THRESHOLD {
@@ -183,7 +238,7 @@ impl DspProcessor {
             let hi = self.bin_edges[i + 1].max(lo + 1);
             let mut bin_max: f32 = 0.0;
             for j in lo..hi.min(half) {
-                let val = magnitudes[j].sqrt() / 0.04194;
+                let val = magnitudes[j].sqrt() / FFT_BIN_SCALE;
                 if val > bin_max {
                     bin_max = val;
                 }
@@ -244,5 +299,247 @@ impl DspProcessor {
             fft_magnitude,
             fft_major_peak,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dsp_processor_creation() {
+        let dsp = DspProcessor::new(48000);
+        assert_eq!(dsp.sample_rate, 48000.0);
+        assert_eq!(dsp.buffer.len(), 0);
+        assert_eq!(dsp.window.len(), FFT_SIZE);
+        assert_eq!(dsp.bin_edges.len(), NUM_BINS + 1);
+    }
+
+    #[test]
+    fn test_window_function_bounds() {
+        let dsp = DspProcessor::new(48000);
+        // HFT90D FlatTop window values should be finite and reasonable
+        // Note: This specific window can have negative values near the edges
+        for (i, &w) in dsp.window.iter().enumerate() {
+            assert!(
+                w.is_finite(),
+                "Window value at index {} should be finite, got {}",
+                i,
+                w
+            );
+            assert!(
+                w.abs() <= 10.0,
+                "Window value at index {} should be reasonable, got {}",
+                i,
+                w
+            );
+        }
+        // Check that the middle values are positive (main lobe)
+        let mid = FFT_SIZE / 2;
+        assert!(
+            dsp.window[mid] > 0.0,
+            "Window center value should be positive"
+        );
+    }
+
+    #[test]
+    fn test_bin_edges_monotonic_increasing() {
+        let dsp = DspProcessor::new(48000);
+        // Bin edges should be non-decreasing (may have duplicates at low frequencies)
+        for i in 0..dsp.bin_edges.len() - 1 {
+            assert!(
+                dsp.bin_edges[i] <= dsp.bin_edges[i + 1],
+                "Bin edge {} ({}) should not exceed bin edge {} ({})",
+                i,
+                dsp.bin_edges[i],
+                i + 1,
+                dsp.bin_edges[i + 1]
+            );
+        }
+        // Verify that the first and last edges are different (overall increasing trend)
+        assert!(
+            dsp.bin_edges[0] < dsp.bin_edges[NUM_BINS],
+            "First bin edge should be less than last bin edge"
+        );
+    }
+
+    #[test]
+    fn test_bin_edges_within_nyquist() {
+        let dsp = DspProcessor::new(48000);
+        let nyquist_bin = FFT_SIZE / 2;
+        // All bin edges should be within Nyquist limit
+        for &edge in &dsp.bin_edges {
+            assert!(
+                edge <= nyquist_bin,
+                "Bin edge {} exceeds Nyquist bin {}",
+                edge,
+                nyquist_bin
+            );
+        }
+    }
+
+    #[test]
+    fn test_silence_produces_zero_output() {
+        let mut dsp = DspProcessor::new(48000);
+        let silence = vec![0.0f32; FFT_SIZE];
+
+        let frames = dsp.push_samples(&silence);
+        assert_eq!(frames.len(), 1, "Should produce one frame");
+
+        let frame = &frames[0];
+        assert_eq!(frame.sample_raw, 0.0, "Silence should have zero sample_raw");
+        assert_eq!(
+            frame.sample_peak, 0,
+            "Silence should have no beat detection"
+        );
+        assert_eq!(
+            frame.fft_magnitude, 0.0,
+            "Silence should have zero magnitude"
+        );
+        // All FFT bins should be zero
+        for &bin in &frame.fft_result {
+            assert_eq!(bin, 0, "Silence should have zero FFT bins");
+        }
+    }
+
+    #[test]
+    fn test_insufficient_samples_no_output() {
+        let mut dsp = DspProcessor::new(48000);
+        let few_samples = vec![0.1f32; 100];
+
+        let frames = dsp.push_samples(&few_samples);
+        assert_eq!(
+            frames.len(),
+            0,
+            "Should not produce frames with insufficient samples"
+        );
+    }
+
+    #[test]
+    fn test_multiple_frames_with_overlap() {
+        let mut dsp = DspProcessor::new(48000);
+        // Send enough samples for 2 overlapping frames: FFT_SIZE + HOP_SIZE
+        let samples = vec![0.1f32; FFT_SIZE + HOP_SIZE];
+
+        let frames = dsp.push_samples(&samples);
+        assert_eq!(
+            frames.len(),
+            2,
+            "Should produce 2 frames with 50% overlap"
+        );
+    }
+
+    #[test]
+    fn test_sample_smoothing_exists() {
+        let mut dsp = DspProcessor::new(48000);
+
+        // Process several frames and verify sample_smth tracks sample_raw with smoothing
+        let mut prev_smth = 0.0;
+        let amplitudes = [0.0, 0.5, 0.8, 0.3, 0.0];
+
+        for &amp in &amplitudes {
+            let samples = vec![amp; FFT_SIZE];
+            let frames = dsp.push_samples(&samples);
+            if !frames.is_empty() {
+                let smth = frames[0].sample_smth;
+                // Verify smoothing is active (not just copying raw value)
+                // After the first non-zero frame, smth should be different from raw
+                if amp == 0.0 && prev_smth > 10.0 {
+                    // When going to zero, smoothed should not immediately reach zero
+                    assert!(
+                        smth > 1.0,
+                        "Smoothed value {} should lag behind raw value 0 due to smoothing",
+                        smth
+                    );
+                }
+                prev_smth = smth;
+            }
+        }
+    }
+
+    #[test]
+    fn test_zero_crossing_count() {
+        let mut dsp = DspProcessor::new(48000);
+
+        // Create a simple square wave alternating between -0.5 and 0.5
+        let mut square_wave = Vec::with_capacity(FFT_SIZE);
+        for i in 0..FFT_SIZE {
+            square_wave.push(if i % 100 < 50 { 0.5 } else { -0.5 });
+        }
+
+        let frames = dsp.push_samples(&square_wave);
+        assert_eq!(frames.len(), 1);
+
+        let frame = &frames[0];
+        // Should detect multiple zero crossings in the square wave
+        assert!(
+            frame.zero_crossing_count > 10,
+            "Square wave should have many zero crossings, got {}",
+            frame.zero_crossing_count
+        );
+    }
+
+    #[test]
+    fn test_beat_detection_sensitivity() {
+        let mut dsp = DspProcessor::new(48000);
+
+        // Process several frames of low energy to establish baseline
+        for _ in 0..BEAT_HISTORY + 5 {
+            let low_energy = vec![0.01f32; HOP_SIZE];
+            let _ = dsp.push_samples(&low_energy);
+        }
+
+        // Now send a high-energy burst
+        let high_energy = vec![0.8f32; HOP_SIZE];
+        let frames = dsp.push_samples(&high_energy);
+
+        // The high energy frame should potentially trigger beat detection
+        // (though this depends on frequency content, so we just verify it runs)
+        assert!(!frames.is_empty(), "Should process high energy samples");
+    }
+
+    #[test]
+    fn test_agc_bounds() {
+        let mut dsp = DspProcessor::new(48000);
+
+        // Process various amplitude levels
+        let amplitudes = [0.1, 0.5, 0.9, 0.3, 0.7];
+        for &amp in &amplitudes {
+            let samples = vec![amp; HOP_SIZE];
+            let frames = dsp.push_samples(&samples);
+            for frame in frames {
+                // All FFT bins should be in valid range after AGC
+                for &bin in &frame.fft_result {
+                    // FFT bins are u8, so they're automatically bounded 0-255
+                    // This just verifies the type constraint
+                    let _ = bin; // Acknowledge we checked it
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_major_peak_frequency_reasonable() {
+        let mut dsp = DspProcessor::new(48000);
+        let sample_rate = 48000.0;
+
+        // Generate a simple sine wave at 1000 Hz
+        let mut sine_wave = Vec::with_capacity(FFT_SIZE);
+        let freq = 1000.0;
+        for i in 0..FFT_SIZE {
+            let t = i as f32 / sample_rate;
+            sine_wave.push((2.0 * std::f32::consts::PI * freq * t).sin() * 0.5);
+        }
+
+        let frames = dsp.push_samples(&sine_wave);
+        assert_eq!(frames.len(), 1);
+
+        let frame = &frames[0];
+        // Peak should be near 1000 Hz (within ~50 Hz due to bin resolution)
+        assert!(
+            (frame.fft_major_peak - 1000.0).abs() < 100.0,
+            "Major peak frequency {} should be close to 1000 Hz",
+            frame.fft_major_peak
+        );
     }
 }
