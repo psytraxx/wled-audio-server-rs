@@ -114,7 +114,7 @@ fn main() {
                         eprintln!("UDP send error: {e}");
                     } else if args.verbose {
                         packet_count += 1;
-                        if packet_count % 100 == 0 {
+                        if packet_count.is_multiple_of(100) {
                             println!(
                                 "[Verbose] Sent packet #{}: raw={:.1}, smth={:.1}, peak={}, mag={:.1}, freq={:.0}Hz, bins=[{},{},{},...]",
                                 packet_count,

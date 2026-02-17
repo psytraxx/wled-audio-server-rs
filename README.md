@@ -16,6 +16,10 @@ Captures system audio on Linux and streams it to WLED AudioReactive via UDP usin
 - Verbose debug mode for DSP and packet inspection
 - Comprehensive unit tests for DSP components
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
+
 ## Build Requirements
 
 ```bash
@@ -180,7 +184,7 @@ cargo doc --open
 ### Running with Debug Logging
 
 ```bash
-RUST_LOG=debug cargo run --release -- -t <IP> --verbose
+RUST_LOG=debug cargo run --release -- --verbose
 ```
 
 ### Code Quality

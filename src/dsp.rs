@@ -67,14 +67,14 @@ pub struct DspProcessor {
     buffer: Vec<f32>,
     window: Vec<f32>,
     fft: Arc<dyn rustfft::Fft<f32>>,
-    bin_edges: Vec<usize>,     // FFT bin index boundaries for 16 log-spaced bins
+    bin_edges: Vec<usize>, // FFT bin index boundaries for 16 log-spaced bins
     agc_min: f32,
     agc_max: f32,
     sample_smth: f32,
     beat_history: Vec<f32>,
     beat_idx: usize,
-    beat_freq_lo: usize,       // FFT bin index for BEAT_FREQ_MIN
-    beat_freq_hi: usize,       // FFT bin index for BEAT_FREQ_MAX
+    beat_freq_lo: usize, // FFT bin index for BEAT_FREQ_MIN
+    beat_freq_hi: usize, // FFT bin index for BEAT_FREQ_MAX
 }
 
 impl DspProcessor {
@@ -94,9 +94,7 @@ impl DspProcessor {
             .map(|i| {
                 let n = i as f32;
                 let w = std::f32::consts::PI * 2.0 * n / (FFT_SIZE as f32 - 1.0);
-                1.0 - 1.942604 * (w).cos()
-                    + 1.340318 * (2.0 * w).cos()
-                    - 0.440811 * (3.0 * w).cos()
+                1.0 - 1.942604 * (w).cos() + 1.340318 * (2.0 * w).cos() - 0.440811 * (3.0 * w).cos()
                     + 0.043097 * (4.0 * w).cos()
             })
             .collect();
@@ -272,8 +270,7 @@ impl DspProcessor {
         }
 
         // --- Beat detection ---
-        let beat_energy: f32 = magnitudes
-            [self.beat_freq_lo..self.beat_freq_hi.min(half)]
+        let beat_energy: f32 = magnitudes[self.beat_freq_lo..self.beat_freq_hi.min(half)]
             .iter()
             .map(|m| m * m)
             .sum();
@@ -281,8 +278,7 @@ impl DspProcessor {
         self.beat_history[self.beat_idx] = beat_energy;
         self.beat_idx = (self.beat_idx + 1) % BEAT_HISTORY;
 
-        let avg_energy: f32 =
-            self.beat_history.iter().sum::<f32>() / BEAT_HISTORY as f32;
+        let avg_energy: f32 = self.beat_history.iter().sum::<f32>() / BEAT_HISTORY as f32;
 
         let sample_peak = if beat_energy > avg_energy * BEAT_THRESHOLD {
             1
@@ -422,11 +418,7 @@ mod tests {
         let samples = vec![0.1f32; FFT_SIZE + HOP_SIZE];
 
         let frames = dsp.push_samples(&samples);
-        assert_eq!(
-            frames.len(),
-            2,
-            "Should produce 2 frames with 50% overlap"
-        );
+        assert_eq!(frames.len(), 2, "Should produce 2 frames with 50% overlap");
     }
 
     #[test]

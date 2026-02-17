@@ -165,7 +165,9 @@ pub fn open_capture_stream(
     }
     .map_err(|e| format!("Failed to build stream: {e}"))?;
 
-    stream.play().map_err(|e| format!("Failed to start stream: {e}"))?;
+    stream
+        .play()
+        .map_err(|e| format!("Failed to start stream: {e}"))?;
 
     Ok((stream, sample_rate, rx, drop_counter))
 }

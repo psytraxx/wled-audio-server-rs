@@ -140,10 +140,7 @@ impl UdpSender {
 
         if !any_sent {
             return Err(last_error.unwrap_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "No broadcast targets available",
-                )
+                std::io::Error::new(std::io::ErrorKind::Other, "No broadcast targets available")
             }));
         }
 
