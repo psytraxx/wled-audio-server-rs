@@ -1,8 +1,10 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, FromSample, Sample, Stream};
+use cpal::{BuildStreamError, Device, FromSample, InputCallbackInfo, Sample, SampleFormat, Stream};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Arc;
+
+pub type CaptureStreamHandle = (Stream, u32, Receiver<Vec<f32>>, Arc<AtomicU64>);
 
 /// Size of the bounded audio sample channel.
 ///
@@ -58,7 +60,7 @@ pub fn list_devices() {
 ///
 /// # Arguments
 /// * `name_hint` - Optional substring to match against device names (case-insensitive).
-///                 If `None`, attempts to auto-detect a device with "monitor" in its name.
+///   If `None`, attempts to auto-detect a device with "monitor" in its name.
 ///
 /// # Returns
 /// * `Some(Device)` if a matching device is found
@@ -105,7 +107,7 @@ fn find_device(name_hint: Option<&str>) -> Option<Device> {
 ///
 /// # Arguments
 /// * `device_hint` - Optional device name substring for device selection.
-///                   If `None`, auto-detects a monitor device.
+///   If `None`, auto-detects a monitor device.
 ///
 /// # Returns
 /// * `Ok((Stream, sample_rate, Receiver<Vec<f32>>, Arc<AtomicU64>))` - A tuple containing:
@@ -131,9 +133,7 @@ fn find_device(name_hint: Option<&str>) -> Option<Device> {
 /// }
 /// # Ok::<(), String>(())
 /// ```
-pub fn open_capture_stream(
-    device_hint: Option<&str>,
-) -> Result<(Stream, u32, Receiver<Vec<f32>>, Arc<AtomicU64>), String> {
+pub fn open_capture_stream(device_hint: Option<&str>) -> Result<CaptureStreamHandle, String> {
     let device = find_device(device_hint).ok_or("Could not find audio device")?;
     #[allow(deprecated)]
     let dev_name = device.name().unwrap_or_else(|_| "<unknown>".into());
@@ -152,20 +152,22 @@ pub fn open_capture_stream(
     let drop_counter = Arc::new(AtomicU64::new(0));
 
     let stream = match config.sample_format() {
-        cpal::SampleFormat::F32 => {
+        SampleFormat::F32 => {
             build_stream::<f32>(&device, &config.into(), channels, tx, drop_counter.clone())
         }
-        cpal::SampleFormat::I16 => {
+        SampleFormat::I16 => {
             build_stream::<i16>(&device, &config.into(), channels, tx, drop_counter.clone())
         }
-        cpal::SampleFormat::U16 => {
+        SampleFormat::U16 => {
             build_stream::<u16>(&device, &config.into(), channels, tx, drop_counter.clone())
         }
         fmt => return Err(format!("Unsupported sample format: {fmt:?}")),
     }
     .map_err(|e| format!("Failed to build stream: {e}"))?;
 
-    stream.play().map_err(|e| format!("Failed to start stream: {e}"))?;
+    stream
+        .play()
+        .map_err(|e| format!("Failed to start stream: {e}"))?;
 
     Ok((stream, sample_rate, rx, drop_counter))
 }
@@ -176,13 +178,13 @@ fn build_stream<T: cpal::SizedSample + Send + 'static>(
     channels: usize,
     tx: SyncSender<Vec<f32>>,
     drop_counter: Arc<AtomicU64>,
-) -> Result<Stream, cpal::BuildStreamError>
+) -> Result<Stream, BuildStreamError>
 where
     f32: FromSample<T>,
 {
     device.build_input_stream(
         config,
-        move |data: &[T], _: &cpal::InputCallbackInfo| {
+        move |data: &[T], _: &InputCallbackInfo| {
             let mono: Vec<f32> = data
                 .chunks(channels)
                 .map(|frame| {

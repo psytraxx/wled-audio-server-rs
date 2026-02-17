@@ -67,14 +67,14 @@ pub struct DspProcessor {
     buffer: Vec<f32>,
     window: Vec<f32>,
     fft: Arc<dyn rustfft::Fft<f32>>,
-    bin_edges: Vec<usize>,     // FFT bin index boundaries for 16 log-spaced bins
+    bin_edges: Vec<usize>, // FFT bin index boundaries for 16 log-spaced bins
     agc_min: f32,
     agc_max: f32,
     sample_smth: f32,
     beat_history: Vec<f32>,
     beat_idx: usize,
-    beat_freq_lo: usize,       // FFT bin index for BEAT_FREQ_MIN
-    beat_freq_hi: usize,       // FFT bin index for BEAT_FREQ_MAX
+    beat_freq_lo: usize, // FFT bin index for BEAT_FREQ_MIN
+    beat_freq_hi: usize, // FFT bin index for BEAT_FREQ_MAX
 }
 
 impl DspProcessor {
@@ -94,9 +94,7 @@ impl DspProcessor {
             .map(|i| {
                 let n = i as f32;
                 let w = std::f32::consts::PI * 2.0 * n / (FFT_SIZE as f32 - 1.0);
-                1.0 - 1.942604 * (w).cos()
-                    + 1.340318 * (2.0 * w).cos()
-                    - 0.440811 * (3.0 * w).cos()
+                1.0 - 1.942604 * (w).cos() + 1.340318 * (2.0 * w).cos() - 0.440811 * (3.0 * w).cos()
                     + 0.043097 * (4.0 * w).cos()
             })
             .collect();
@@ -222,9 +220,14 @@ impl DspProcessor {
         // Only search within FREQ_MIN..FREQ_MAX
         let search_lo = (FREQ_MIN / freq_resolution).round() as usize;
         let search_hi = (FREQ_MAX / freq_resolution).round() as usize;
-        for i in search_lo..search_hi.min(half) {
-            if magnitudes[i] > peak_mag {
-                peak_mag = magnitudes[i];
+        for (i, &mag) in magnitudes
+            .iter()
+            .enumerate()
+            .take(search_hi.min(half))
+            .skip(search_lo)
+        {
+            if mag > peak_mag {
+                peak_mag = mag;
                 peak_idx = i;
             }
         }
@@ -233,17 +236,17 @@ impl DspProcessor {
 
         // --- 16 log-spaced bins ---
         let mut raw_bins = [0.0f32; NUM_BINS];
-        for i in 0..NUM_BINS {
+        for (i, raw_bin) in raw_bins.iter_mut().enumerate().take(NUM_BINS) {
             let lo = self.bin_edges[i];
             let hi = self.bin_edges[i + 1].max(lo + 1);
             let mut bin_max: f32 = 0.0;
-            for j in lo..hi.min(half) {
-                let val = magnitudes[j].sqrt() / FFT_BIN_SCALE;
+            for &mag in magnitudes.iter().take(hi.min(half)).skip(lo) {
+                let val = mag.sqrt() / FFT_BIN_SCALE;
                 if val > bin_max {
                     bin_max = val;
                 }
             }
-            raw_bins[i] = bin_max;
+            *raw_bin = bin_max;
         }
 
         // --- AGC ---
@@ -272,8 +275,7 @@ impl DspProcessor {
         }
 
         // --- Beat detection ---
-        let beat_energy: f32 = magnitudes
-            [self.beat_freq_lo..self.beat_freq_hi.min(half)]
+        let beat_energy: f32 = magnitudes[self.beat_freq_lo..self.beat_freq_hi.min(half)]
             .iter()
             .map(|m| m * m)
             .sum();
@@ -281,8 +283,7 @@ impl DspProcessor {
         self.beat_history[self.beat_idx] = beat_energy;
         self.beat_idx = (self.beat_idx + 1) % BEAT_HISTORY;
 
-        let avg_energy: f32 =
-            self.beat_history.iter().sum::<f32>() / BEAT_HISTORY as f32;
+        let avg_energy: f32 = self.beat_history.iter().sum::<f32>() / BEAT_HISTORY as f32;
 
         let sample_peak = if beat_energy > avg_energy * BEAT_THRESHOLD {
             1
@@ -422,11 +423,7 @@ mod tests {
         let samples = vec![0.1f32; FFT_SIZE + HOP_SIZE];
 
         let frames = dsp.push_samples(&samples);
-        assert_eq!(
-            frames.len(),
-            2,
-            "Should produce 2 frames with 50% overlap"
-        );
+        assert_eq!(frames.len(), 2, "Should produce 2 frames with 50% overlap");
     }
 
     #[test]

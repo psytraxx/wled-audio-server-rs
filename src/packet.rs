@@ -1,4 +1,7 @@
-use std::net::{SocketAddr, UdpSocket};
+use if_addrs::{get_if_addrs, IfAddr};
+use std::collections::HashSet;
+use std::io::{Error, Result};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 
 /// V2 AudioSync packet for WLED AudioReactive (44 bytes, little-endian).
 ///
@@ -86,7 +89,7 @@ impl AudioSyncPacketV2 {
 /// for AudioSync packet transmission to WLED devices.
 pub struct UdpSender {
     socket: UdpSocket,
-    target: SocketAddr,
+    targets: Vec<SocketAddr>,
     frame_counter: u8,
 }
 
@@ -94,22 +97,24 @@ impl UdpSender {
     /// Creates a new UDP sender bound to an ephemeral port.
     ///
     /// # Arguments
-    /// * `target_ip` - Target IP address (IPv4 format, e.g., "192.168.1.100")
     /// * `port` - Target UDP port (typically 11988 for WLED AudioReactive)
     ///
     /// # Returns
     /// * `Ok(UdpSender)` - Ready-to-use sender with frame counter initialized to 0
-    /// * `Err(io::Error)` - If socket binding or address parsing fails
-    pub fn new(target_ip: &str, port: u16) -> std::io::Result<Self> {
+    /// * `Err(io::Error)` - If socket setup fails
+    pub fn new(port: u16) -> Result<Self> {
         let socket = UdpSocket::bind("0.0.0.0:0")?;
-        let target: SocketAddr = format!("{target_ip}:{port}").parse().map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, e)
-        })?;
+        socket.set_broadcast(true)?;
+        let targets = discover_broadcast_targets(port);
         Ok(Self {
             socket,
-            target,
+            targets,
             frame_counter: 0,
         })
+    }
+
+    pub fn targets(&self) -> &[SocketAddr] {
+        &self.targets
     }
 
     /// Sends an AudioSync packet to the target WLED device.
@@ -122,10 +127,50 @@ impl UdpSender {
     /// # Returns
     /// * `Ok(())` - Packet sent successfully
     /// * `Err(io::Error)` - If UDP transmission fails
-    pub fn send(&mut self, packet: &AudioSyncPacketV2) -> std::io::Result<()> {
+    pub fn send(&mut self, packet: &AudioSyncPacketV2) -> Result<()> {
         let bytes = packet.to_bytes(self.frame_counter);
-        self.socket.send_to(&bytes, self.target)?;
+        let mut last_error = None;
+        let mut any_sent = false;
+
+        for target in &self.targets {
+            match self.socket.send_to(&bytes, target) {
+                Ok(_) => any_sent = true,
+                Err(e) => last_error = Some(e),
+            }
+        }
+
+        if !any_sent {
+            return Err(
+                last_error.unwrap_or_else(|| Error::other("No broadcast targets available"))
+            );
+        }
+
         self.frame_counter = self.frame_counter.wrapping_add(1);
         Ok(())
     }
+}
+
+fn discover_broadcast_targets(port: u16) -> Vec<SocketAddr> {
+    let mut unique = HashSet::new();
+    unique.insert(SocketAddr::V4(SocketAddrV4::new(
+        Ipv4Addr::new(255, 255, 255, 255),
+        port,
+    )));
+
+    if let Ok(ifaces) = get_if_addrs() {
+        for iface in ifaces {
+            if let IfAddr::V4(v4) = iface.addr {
+                if v4.ip.is_loopback() {
+                    continue;
+                }
+
+                let ip_u32 = u32::from(v4.ip);
+                let mask_u32 = u32::from(v4.netmask);
+                let broadcast = Ipv4Addr::from(ip_u32 | !mask_u32);
+                unique.insert(SocketAddr::V4(SocketAddrV4::new(broadcast, port)));
+            }
+        }
+    }
+
+    unique.into_iter().collect()
 }

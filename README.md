@@ -1,4 +1,5 @@
 # WLED Audio Server (Rust)
+**Project Base:** This project is based on [SR-WLED-audio-server-win](https://github.com/Victoare/SR-WLED-audio-server-win) by Victoare.
 
 Captures system audio on Linux and streams it to WLED AudioReactive via UDP using the V2 protocol.
 
@@ -15,6 +16,10 @@ Captures system audio on Linux and streams it to WLED AudioReactive via UDP usin
 - Verbose debug mode for DSP and packet inspection
 - Comprehensive unit tests for DSP components
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
+
 ## Build Requirements
 
 ```bash
@@ -23,6 +28,8 @@ cargo build --release
 ```
 
 ## Usage
+
+The server runs in broadcast-only mode and sends UDP packets to all detected IPv4 interface broadcast addresses (plus `255.255.255.255`) on the configured port.
 
 ### List available audio devices
 
@@ -34,10 +41,10 @@ cargo run -- --list-devices
 
 ```bash
 # Auto-detect monitor device
-PULSE_SOURCE=<monitor_source> cargo run -- -t <WLED_IP>
+PULSE_SOURCE=<monitor_source> cargo run --
 
 # Or specify device explicitly
-cargo run -- -d pulse -t <WLED_IP>
+cargo run -- -d pulse
 ```
 
 ### Finding your monitor source
@@ -54,13 +61,12 @@ Look for a line ending in `.monitor` — that's your system audio output monitor
 
 ```bash
 PULSE_SOURCE="alsa_output.usb-Creative_Technology_Ltd_Sound_Blaster_E5_02160140311-00.analog-stereo.monitor" \
-  cargo run --release -- -d pulse -t 192.168.178.63
+  cargo run --release -- -d pulse
 ```
 
 ## CLI Options
 
 ```
--t, --target <IP>       WLED IP address [default: 192.168.178.63]
 -p, --port <PORT>       UDP port [default: 11988]
 -l, --list-devices      List audio input devices and exit
 -d, --device <NAME>     Device name substring (e.g., "pulse", "pipewire")
@@ -72,7 +78,7 @@ PULSE_SOURCE="alsa_output.usb-Creative_Technology_Ltd_Sound_Blaster_E5_021601403
 Enable detailed logging with the `--verbose` flag:
 
 ```bash
-cargo run --release -- -t 192.168.1.100 --verbose
+cargo run --release -- --verbose
 ```
 
 Verbose mode displays:
@@ -125,7 +131,7 @@ A test receiver is included to validate packet format:
 cargo run --bin test-receiver
 
 # Terminal 2
-PULSE_SOURCE=<monitor> cargo run -- -t 127.0.0.1
+PULSE_SOURCE=<monitor> cargo run --
 ```
 
 ## Troubleshooting
@@ -139,6 +145,11 @@ PULSE_SOURCE=<monitor> cargo run -- -t 127.0.0.1
 **No audio being captured**
 → Verify the monitor source is correct with `pactl list short sources`
 → Play some audio and check if the source status is `RUNNING`
+
+**WLED not receiving broadcast packets**
+→ Ensure WLED and this server are on the same L2 network/VLAN
+→ Some AP/router isolation modes block broadcast/multicast traffic; disable client isolation
+→ Confirm WLED AudioReactive is listening on UDP port `11988` (or your configured `--port`)
 
 **Audio dropout warnings**
 → Indicates the DSP processing cannot keep up with audio capture
@@ -173,7 +184,7 @@ cargo doc --open
 ### Running with Debug Logging
 
 ```bash
-RUST_LOG=debug cargo run --release -- -t <IP> --verbose
+RUST_LOG=debug cargo run --release -- --verbose
 ```
 
 ### Code Quality

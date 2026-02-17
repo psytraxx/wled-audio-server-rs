@@ -12,10 +12,6 @@ use wled_audio_server::packet::{self, UdpSender};
     about = "Stream system audio to WLED AudioReactive via UDP"
 )]
 struct Args {
-    /// WLED target IP address
-    #[arg(short = 't', long = "target", default_value = "192.168.178.63")]
-    target: String,
-
     /// UDP port
     #[arg(short, long, default_value_t = 11988)]
     port: u16,
@@ -60,7 +56,7 @@ fn main() {
     };
 
     // UDP sender
-    let mut sender = match UdpSender::new(&args.target, args.port) {
+    let mut sender = match UdpSender::new(args.port) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Error creating UDP socket: {e}");
@@ -68,7 +64,13 @@ fn main() {
         }
     };
 
-    println!("Sending to {}:{}", args.target, args.port);
+    let targets = sender
+        .targets()
+        .iter()
+        .map(|addr| addr.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    println!("Broadcasting to: {}", targets);
     if args.verbose {
         println!("Verbose mode enabled");
         println!(
@@ -112,7 +114,7 @@ fn main() {
                         eprintln!("UDP send error: {e}");
                     } else if args.verbose {
                         packet_count += 1;
-                        if packet_count % 100 == 0 {
+                        if packet_count.is_multiple_of(100) {
                             println!(
                                 "[Verbose] Sent packet #{}: raw={:.1}, smth={:.1}, peak={}, mag={:.1}, freq={:.0}Hz, bins=[{},{},{},...]",
                                 packet_count,
