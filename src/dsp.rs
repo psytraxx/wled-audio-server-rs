@@ -220,9 +220,14 @@ impl DspProcessor {
         // Only search within FREQ_MIN..FREQ_MAX
         let search_lo = (FREQ_MIN / freq_resolution).round() as usize;
         let search_hi = (FREQ_MAX / freq_resolution).round() as usize;
-        for i in search_lo..search_hi.min(half) {
-            if magnitudes[i] > peak_mag {
-                peak_mag = magnitudes[i];
+        for (i, &mag) in magnitudes
+            .iter()
+            .enumerate()
+            .take(search_hi.min(half))
+            .skip(search_lo)
+        {
+            if mag > peak_mag {
+                peak_mag = mag;
                 peak_idx = i;
             }
         }
@@ -231,17 +236,17 @@ impl DspProcessor {
 
         // --- 16 log-spaced bins ---
         let mut raw_bins = [0.0f32; NUM_BINS];
-        for i in 0..NUM_BINS {
+        for (i, raw_bin) in raw_bins.iter_mut().enumerate().take(NUM_BINS) {
             let lo = self.bin_edges[i];
             let hi = self.bin_edges[i + 1].max(lo + 1);
             let mut bin_max: f32 = 0.0;
-            for j in lo..hi.min(half) {
-                let val = magnitudes[j].sqrt() / FFT_BIN_SCALE;
+            for &mag in magnitudes.iter().take(hi.min(half)).skip(lo) {
+                let val = mag.sqrt() / FFT_BIN_SCALE;
                 if val > bin_max {
                     bin_max = val;
                 }
             }
-            raw_bins[i] = bin_max;
+            *raw_bin = bin_max;
         }
 
         // --- AGC ---
