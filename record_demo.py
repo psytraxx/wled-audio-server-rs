@@ -32,14 +32,14 @@ child = pexpect.spawn(
     dimensions=(ROWS, COLS),
 )
 
-# Drain until chooser appears
-child.expect("Select audio source", timeout=15)
+# Wait until the full menu has rendered — "> default" is the last line
+child.expect("> default", timeout=15)
 record(child.before + child.match.group())
 
-# Drain a moment so the full chooser renders
-drain(child, 1.5)
+# Pause so the viewer can read the full menu
+drain(child, 3.5)
 
-# Press Enter — select first item (the .monitor source)
+# Press Enter — chooser pre-selects "default", so just confirm
 child.send("\r")
 
 # Drain streaming output for ~4 seconds
@@ -51,7 +51,7 @@ drain(child, 2.0)
 
 # Write cast file
 header = {"version": 2, "width": COLS, "height": ROWS,
-          "timestamp": int(t0), "title": "WLED Audio Server — source chooser demo"}
+          "timestamp": int(t0), "title": "WLED Audio Server — device chooser demo"}
 with open(CAST, "w") as f:
     f.write(json.dumps(header) + "\n")
     for e in events:
