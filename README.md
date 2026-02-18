@@ -17,6 +17,8 @@ Captures system audio on Linux and streams it to WLED AudioReactive via UDP usin
 - Verbose debug mode for DSP and packet inspection
 - Comprehensive unit tests for DSP components
 
+![Demo](demo.gif)
+
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for release history.
@@ -156,6 +158,40 @@ cargo run --release
 - **Memory**: <10MB resident set size
 - **Packet Rate**: 47 packets/sec @ 48kHz, 43 packets/sec @ 44.1kHz
 - **Audio Buffer**: 8-slot bounded channel prevents memory buildup under load
+
+## Demo Recording
+
+The animated demo GIF ([demo.gif](demo.gif)) is generated from a live recording
+of the binary using [pexpect](https://pexpect.readthedocs.io) and
+[asciinema-agg](https://github.com/asciinema/agg).
+
+### Requirements
+
+```bash
+# pexpect (usually already present)
+python3 -m pip install pexpect
+
+# asciinema-agg snap
+sudo snap install asciinema-agg   # or use /snap/bin/asciinema-agg if already installed
+```
+
+### Re-generate
+
+```bash
+# 1. Build the release binary
+cargo build --release
+
+# 2. Record a cast file (runs the binary, selects the first .monitor source, streams ~4s)
+python3 record_demo.py
+
+# 3. Render to GIF
+/snap/bin/asciinema-agg demo.cast demo.gif
+```
+
+`record_demo.py` spawns `./target/release/wled-audio-server -v`, waits for the
+interactive source chooser to appear, presses Enter to pick the first source
+(the `.monitor`), lets verbose output stream for a few seconds, then sends
+Ctrl+C. Output is written directly as an [asciinema v2](https://docs.asciinema.org/manual/asciicast/v2/) cast file.
 
 ## Development
 
