@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use wled_audio_server::audio::open_capture_stream;
+use wled_audio_server::audio::{choose_pulse_source, open_capture_stream};
 use wled_audio_server::dsp::DspProcessor;
 use wled_audio_server::packet::{AudioSyncPacketV2, UdpSender};
 
@@ -17,14 +17,6 @@ struct Args {
     #[arg(short, long, default_value_t = 11988)]
     port: u16,
 
-    /// List audio input devices and exit
-    #[arg(short, long = "list-devices")]
-    list_devices: bool,
-
-    /// Audio device name (substring match); auto-selects "monitor" device
-    #[arg(short, long)]
-    device: Option<String>,
-
     /// Enable verbose debug output
     #[arg(short, long)]
     verbose: bool,
@@ -32,11 +24,6 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-
-    if args.list_devices {
-        wled_audio_server::audio::list_devices();
-        return;
-    }
 
     // Ctrl+C handler
     let running = Arc::new(AtomicBool::new(true));
@@ -46,8 +33,18 @@ fn main() {
     })
     .expect("Failed to set Ctrl+C handler");
 
+    // Show interactive PulseAudio source chooser
+    let device_hint = match choose_pulse_source() {
+        Some(source) => {
+            // SAFETY: single-threaded at this point (before cpal spawns threads)
+            unsafe { std::env::set_var("PULSE_SOURCE", &source) };
+            Some("pulse".to_string())
+        }
+        None => None,
+    };
+
     // Open audio capture
-    let (_stream, sample_rate, rx, drop_counter) = match open_capture_stream(args.device.as_deref())
+    let (_stream, sample_rate, rx, drop_counter) = match open_capture_stream(device_hint.as_deref())
     {
         Ok(v) => v,
         Err(e) => {

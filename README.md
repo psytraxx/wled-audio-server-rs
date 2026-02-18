@@ -6,6 +6,7 @@ Captures system audio on Linux and streams it to WLED AudioReactive via UDP usin
 ## Features
 
 - Real-time audio capture via cpal (ALSA/PulseAudio/PipeWire)
+- Interactive source chooser (uses `pactl` to list sources)
 - 2048-sample FFT with 50% overlap (HFT90D FlatTop window)
 - 16 log-spaced frequency bins (60-6000 Hz)
 - Asymmetric AGC for auto-leveling
@@ -31,46 +32,29 @@ cargo build --release
 
 The server runs in broadcast-only mode and sends UDP packets to all detected IPv4 interface broadcast addresses (plus `255.255.255.255`) on the configured port.
 
-### List available audio devices
-
-```bash
-cargo run -- --list-devices
-```
-
 ### Start streaming
 
 ```bash
-# Auto-detect monitor device
-PULSE_SOURCE=<monitor_source> cargo run --
-
-# Or specify device explicitly
-cargo run -- -d pulse
+cargo run --release
 ```
 
-### Finding your monitor source
+An interactive menu lets you pick the PulseAudio source to capture from:
 
-On PipeWire/PulseAudio systems:
-
-```bash
-pactl list short sources
+```
+? Select audio source ›
+  alsa_input.usb-Creative...analog-stereo
+❯ alsa_output.usb-Creative...analog-stereo.monitor
+  alsa_input.pci-0000_00_1f...analog-stereo
 ```
 
-Look for a line ending in `.monitor` — that's your system audio output monitor.
-
-### Example
-
-```bash
-PULSE_SOURCE="alsa_output.usb-Creative_Technology_Ltd_Sound_Blaster_E5_02160140311-00.analog-stereo.monitor" \
-  cargo run --release -- -d pulse
-```
+Sources ending in `.monitor` capture the output of that audio device (system
+playback audio). Use arrow keys to select, Enter to confirm.
 
 ## CLI Options
 
 ```
--p, --port <PORT>       UDP port [default: 11988]
--l, --list-devices      List audio input devices and exit
--d, --device <NAME>     Device name substring (e.g., "pulse", "pipewire")
--v, --verbose           Enable verbose debug output
+-p, --port <PORT>   UDP port [default: 11988]
+-v, --verbose       Enable verbose debug output
 ```
 
 ### Verbose Mode
@@ -131,20 +115,20 @@ A test receiver is included to validate packet format:
 cargo run --bin test-receiver
 
 # Terminal 2
-PULSE_SOURCE=<monitor> cargo run --
+cargo run --release
 ```
 
 ## Troubleshooting
 
 **No monitor device found**
-→ PipeWire systems don't expose monitor devices via ALSA. Use `PULSE_SOURCE` env var.
+→ PipeWire systems don't expose monitor devices via ALSA. The interactive chooser uses `pactl` to list all PulseAudio sources including monitors — select the one ending in `.monitor`.
 
 **Build fails with alsa-sys error**
 → Install `libasound2-dev`: `sudo apt install libasound2-dev`
 
 **No audio being captured**
-→ Verify the monitor source is correct with `pactl list short sources`
-→ Play some audio and check if the source status is `RUNNING`
+→ Re-run and select a different source — make sure to pick the `.monitor` of your active output device
+→ Play some audio and check if the source status shows `RUNNING` in the chooser
 
 **WLED not receiving broadcast packets**
 → Ensure WLED and this server are on the same L2 network/VLAN
@@ -160,7 +144,7 @@ PULSE_SOURCE=<monitor> cargo run --
 ## Architecture
 
 - `src/bin/main.rs` — CLI, Ctrl+C handler, main loop, verbose logging
-- `src/audio.rs` — cpal capture, device selection, stereo→mono downmix, drop monitoring
+- `src/audio.rs` — cpal capture, interactive source chooser, device selection, stereo→mono downmix, drop monitoring
 - `src/dsp.rs` — FFT, 16 log bins, AGC, beat detection (with unit tests)
 - `src/packet.rs` — V2 packet serialization, UDP sender
 - `src/bin/test_receiver.rs` — Validation tool for V2 packet format

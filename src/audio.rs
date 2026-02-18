@@ -1,5 +1,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BuildStreamError, Device, FromSample, InputCallbackInfo, Sample, SampleFormat, Stream};
+use dialoguer::Select;
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Arc;
@@ -17,43 +19,43 @@ pub type CaptureStreamHandle = (Stream, u32, Receiver<Vec<f32>>, Arc<AtomicU64>)
 /// At 48kHz with typical chunk sizes, this represents ~10-20ms of buffering.
 const AUDIO_CHANNEL_SIZE: usize = 8;
 
-/// Lists all available audio input devices to stdout.
+/// Runs `pactl list short sources` and presents an interactive chooser.
 ///
-/// For each device, displays its index, name, number of channels,
-/// sample rate, and sample format. If a device cannot be queried,
-/// it will show "no config" instead of configuration details.
+/// The caller should set `PULSE_SOURCE` to the returned name before opening a
+/// cpal "pulse" device, so PulseAudio captures from the chosen source.
 ///
-/// # Example
-/// ```text
-/// Available input devices:
-///   [0] Built-in Audio (2ch 48000Hz F32)
-///   [1] pulse (2ch 48000Hz I16)
-/// ```
-pub fn list_devices() {
-    let host = cpal::default_host();
-    let devices = match host.input_devices() {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("Error listing devices: {e}");
-            return;
-        }
-    };
-    println!("Available input devices:");
-    for (i, dev) in devices.enumerate() {
-        #[allow(deprecated)]
-        let name = dev.name().unwrap_or_else(|_| "<unknown>".into());
-        let default_cfg = dev.default_input_config();
-        let info = match default_cfg {
-            Ok(cfg) => format!(
-                "{}ch {}Hz {:?}",
-                cfg.channels(),
-                cfg.sample_rate(),
-                cfg.sample_format()
-            ),
-            Err(_) => "no config".into(),
-        };
-        println!("  [{i}] {name} ({info})");
+/// Returns `Some(source_name)` on success, `None` if pactl is unavailable or
+/// the user cancels.
+pub fn choose_pulse_source() -> Option<String> {
+    let output = Command::new("pactl")
+        .args(["list", "short", "sources"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
     }
+
+    // Each line: index \t name \t module \t sample_spec \t state
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let sources: Vec<&str> = stdout
+        .lines()
+        .filter_map(|line| line.split('\t').nth(1))
+        .collect();
+
+    if sources.is_empty() {
+        eprintln!("No PulseAudio sources found via pactl.");
+        return None;
+    }
+
+    let selection = Select::new()
+        .with_prompt("Select audio source")
+        .items(&sources)
+        .default(0)
+        .interact()
+        .ok()?;
+
+    Some(sources[selection].to_string())
 }
 
 /// Finds an audio input device by name substring match, or auto-detects a monitor device.
@@ -68,7 +70,7 @@ pub fn list_devices() {
 ///
 /// # Notes
 /// On PipeWire/PulseAudio systems, monitor devices may not be visible via ALSA.
-/// Users should set the `PULSE_SOURCE` environment variable or use the `-d` flag.
+/// Use the interactive chooser (`choose_pulse_source`) or pass `-d` explicitly.
 fn find_device(name_hint: Option<&str>) -> Option<Device> {
     let host = cpal::default_host();
     let devices: Vec<Device> = host.input_devices().ok()?.collect();
@@ -98,7 +100,9 @@ fn find_device(name_hint: Option<&str>) -> Option<Device> {
     }
 
     eprintln!("No monitor device found automatically.");
-    eprintln!("Hint: set PULSE_SOURCE=<monitor_name> or use -d to specify a device.");
+    eprintln!(
+        "Hint: use -d to specify a device, or run without arguments for the interactive chooser."
+    );
     eprintln!("Use --list-devices to see available devices.");
     None
 }
