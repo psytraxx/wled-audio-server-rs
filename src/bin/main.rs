@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use wled_audio_server::audio::{choose_pulse_source, open_capture_stream};
+use wled_audio_server::audio::{choose_input_device, open_capture_stream};
 use wled_audio_server::dsp::DspProcessor;
 use wled_audio_server::packet::{AudioSyncPacketV2, UdpSender};
 
@@ -33,15 +33,7 @@ fn main() {
     })
     .expect("Failed to set Ctrl+C handler");
 
-    // Show interactive PulseAudio source chooser
-    let device_hint = match choose_pulse_source() {
-        Some(source) => {
-            // SAFETY: single-threaded at this point (before cpal spawns threads)
-            unsafe { std::env::set_var("PULSE_SOURCE", &source) };
-            Some("pulse".to_string())
-        }
-        None => None,
-    };
+    let device_hint = choose_input_device();
 
     // Open audio capture
     let (_stream, sample_rate, rx, drop_counter) = match open_capture_stream(device_hint.as_deref())
