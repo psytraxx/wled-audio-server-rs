@@ -34,44 +34,30 @@ jobs:
             wled-audio-server-x86_64-linux \
             --clobber
 
-  build-macos-arm:
+  build-macos:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build release binary
+      - name: Build arm64 binary
         run: cargo build --release --bin wled-audio-server
 
-      - name: Upload binary to release
+      - name: Build x86_64 binary (cross-compile)
+        run: cargo build --release --bin wled-audio-server --target x86_64-apple-darwin
+
+      - name: Upload binaries to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cp target/release/wled-audio-server wled-audio-server-aarch64-macos
+          cp target/x86_64-apple-darwin/release/wled-audio-server wled-audio-server-x86_64-macos
           gh release upload ${{ github.event.release.tag_name }} \
             wled-audio-server-aarch64-macos \
-            --clobber
-
-  build-macos-intel:
-    runs-on: macos-13
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Build release binary
-        run: cargo build --release --bin wled-audio-server
-
-      - name: Upload binary to release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          cp target/release/wled-audio-server wled-audio-server-x86_64-macos
-          gh release upload ${{ github.event.release.tag_name }} \
             wled-audio-server-x86_64-macos \
             --clobber
