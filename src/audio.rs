@@ -1,7 +1,9 @@
+#[cfg(target_os = "linux")]
+extern crate libc;
+
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BuildStreamError, Device, FromSample, InputCallbackInfo, Sample, SampleFormat, Stream};
 use dialoguer::Select;
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Arc;
@@ -19,58 +21,80 @@ pub type CaptureStreamHandle = (Stream, u32, Receiver<Vec<f32>>, Arc<AtomicU64>)
 /// At 48kHz with typical chunk sizes, this represents ~10-20ms of buffering.
 const AUDIO_CHANNEL_SIZE: usize = 8;
 
-/// Runs `pactl list short sources` and presents an interactive chooser.
+/// Presents an interactive chooser over all cpal input devices.
 ///
-/// The caller should set `PULSE_SOURCE` to the returned name before opening a
-/// cpal "pulse" device, so PulseAudio captures from the chosen source.
+/// Works on all platforms. On macOS, users should have BlackHole (or similar)
+/// installed so that a loopback device appears in the list.
 ///
-/// Returns `Some(source_name)` on success, `None` if pactl is unavailable or
+/// Returns `Some(device_name)` on success, `None` if no devices are found or
 /// the user cancels.
-pub fn choose_pulse_source() -> Option<String> {
-    let output = Command::new("pactl")
-        .args(["list", "short", "sources"])
-        .output()
-        .ok()?;
+pub fn choose_input_device() -> Option<String> {
+    let host = cpal::default_host();
+    let devices: Vec<Device> = host.input_devices().ok()?.collect();
 
-    if !output.status.success() {
+    // Probe each device for a usable input config while suppressing ALSA/JACK
+    // error spam that leaks to stderr when probing unsupported plugin devices.
+    let usable: Vec<String> = with_stderr_suppressed(|| {
+        devices
+            .into_iter()
+            .filter_map(|d| {
+                d.default_input_config().ok()?;
+                #[allow(deprecated)]
+                let name = d.name().ok()?;
+                // Exclude the ALSA null sink — it captures silence only.
+                if name == "null" {
+                    return None;
+                }
+                Some(name)
+            })
+            .collect()
+    });
+
+    if usable.is_empty() {
+        eprintln!("No input devices found.");
         return None;
     }
 
-    // Each line: index \t name \t module \t sample_spec \t state
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let sources: Vec<&str> = stdout
-        .lines()
-        .filter_map(|line| line.split('\t').nth(1))
-        .collect();
-
-    if sources.is_empty() {
-        eprintln!("No PulseAudio sources found via pactl.");
-        return None;
-    }
+    // Default cursor to "default" if present, else "pulse", else first item.
+    let default_idx = usable
+        .iter()
+        .position(|n| n == "default")
+        .or_else(|| usable.iter().position(|n| n == "pulse"))
+        .unwrap_or(0);
 
     let selection = Select::new()
-        .with_prompt("Select audio source")
-        .items(&sources)
-        .default(0)
+        .with_prompt("Select audio input device")
+        .items(&usable)
+        .default(default_idx)
         .interact()
         .ok()?;
 
-    Some(sources[selection].to_string())
+    Some(usable[selection].clone())
 }
 
-/// Finds an audio input device by name substring match, or auto-detects a monitor device.
+/// Temporarily redirects stderr to /dev/null for the duration of `f`.
 ///
-/// # Arguments
-/// * `name_hint` - Optional substring to match against device names (case-insensitive).
-///   If `None`, attempts to auto-detect a device with "monitor" in its name.
-///
-/// # Returns
-/// * `Some(Device)` if a matching device is found
-/// * `None` if no device matches, with helpful error messages printed to stderr
-///
-/// # Notes
-/// On PipeWire/PulseAudio systems, monitor devices may not be visible via ALSA.
-/// Use the interactive chooser (`choose_pulse_source`) or pass `-d` explicitly.
+/// Used to suppress ALSA/JACK error messages that leak to the terminal
+/// when probing devices that don't support audio input.
+#[cfg(target_os = "linux")]
+fn with_stderr_suppressed<F: FnOnce() -> T, T>(f: F) -> T {
+    unsafe {
+        let devnull = libc::open(b"/dev/null\0".as_ptr() as *const libc::c_char, libc::O_WRONLY);
+        let saved = libc::dup(libc::STDERR_FILENO);
+        libc::dup2(devnull, libc::STDERR_FILENO);
+        libc::close(devnull);
+        let result = f();
+        libc::dup2(saved, libc::STDERR_FILENO);
+        libc::close(saved);
+        result
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn with_stderr_suppressed<F: FnOnce() -> T, T>(f: F) -> T {
+    f()
+}
+
 fn find_device(name_hint: Option<&str>) -> Option<Device> {
     let host = cpal::default_host();
     let devices: Vec<Device> = host.input_devices().ok()?.collect();
@@ -100,10 +124,6 @@ fn find_device(name_hint: Option<&str>) -> Option<Device> {
     }
 
     eprintln!("No monitor device found automatically.");
-    eprintln!(
-        "Hint: use -d to specify a device, or run without arguments for the interactive chooser."
-    );
-    eprintln!("Use --list-devices to see available devices.");
     None
 }
 
@@ -131,7 +151,7 @@ fn find_device(name_hint: Option<&str>) -> Option<Device> {
 /// ```no_run
 /// use wled_audio_server::audio::open_capture_stream;
 ///
-/// let (_stream, sample_rate, rx, _drop_counter) = open_capture_stream(Some("pulse"))?;
+/// let (_stream, sample_rate, rx, _drop_counter) = open_capture_stream(Some("BlackHole 2ch"))?;
 /// while let Ok(samples) = rx.recv() {
 ///     // Process samples...
 /// }

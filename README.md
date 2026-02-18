@@ -1,12 +1,12 @@
 # WLED Audio Server (Rust)
 **Project Base:** This project is based on [SR-WLED-audio-server-win](https://github.com/Victoare/SR-WLED-audio-server-win) by Victoare.
 
-Captures system audio on Linux and streams it to WLED AudioReactive via UDP using the V2 protocol.
+Captures system audio and streams it to WLED AudioReactive via UDP using the V2 protocol. Supports Linux and macOS.
 
 ## Features
 
-- Real-time audio capture via cpal (ALSA/PulseAudio/PipeWire)
-- Interactive source chooser (uses `pactl` to list sources)
+- Real-time audio capture via cpal (CoreAudio on macOS, ALSA/PipeWire on Linux)
+- Interactive device chooser at startup
 - 2048-sample FFT with 50% overlap (HFT90D FlatTop window)
 - 16 log-spaced frequency bins (60-6000 Hz)
 - Asymmetric AGC for auto-leveling
@@ -25,17 +25,40 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Build Requirements
 
-`libasound2-dev` is required **at compile time** (headers for ALSA linking):
+### Linux
+
+`libasound2-dev` is required **at compile time** (ALSA headers):
 
 ```bash
 sudo apt install libasound2-dev
 cargo build --release
 ```
 
+### macOS
+
+No extra system packages needed — cpal uses CoreAudio directly:
+
+```bash
+cargo build --release
+```
+
+To capture system audio (not just microphone input), install [BlackHole](https://github.com/ExistingApps/BlackHole):
+
+```bash
+brew install blackhole-2ch
+```
+
+Then set your system audio output to BlackHole (or create a Multi-Output Device in **Audio MIDI Setup** to hear audio and capture it simultaneously).
+
 ## Runtime Requirements
 
-The compiled binary dynamically links `libasound.so.2` (`libasound2`), which is
-typically pre-installed on any Linux desktop.
+### Linux
+
+The compiled binary dynamically links `libasound.so.2` (`libasound2`), which is typically pre-installed on any Linux desktop.
+
+### macOS
+
+No additional runtime dependencies.
 
 ## Usage
 
@@ -47,17 +70,17 @@ The server runs in broadcast-only mode and sends UDP packets to all detected IPv
 cargo run --release
 ```
 
-An interactive menu lets you pick the PulseAudio source to capture from:
+An interactive menu lets you pick the audio input device:
 
 ```
-? Select audio source ›
-  alsa_input.usb-Creative...analog-stereo
-❯ alsa_output.usb-Creative...analog-stereo.monitor
-  alsa_input.pci-0000_00_1f...analog-stereo
+? Select audio input device ›
+  Built-in Microphone
+❯ BlackHole 2ch
 ```
 
-Sources ending in `.monitor` capture the output of that audio device (system
-playback audio). Use arrow keys to select, Enter to confirm.
+On Linux, all ALSA/PipeWire input devices are listed. On macOS, CoreAudio input devices are listed — select **BlackHole 2ch** to capture system audio.
+
+Use arrow keys to select, Enter to confirm.
 
 ## CLI Options
 
@@ -129,20 +152,21 @@ cargo run --release
 
 ## Troubleshooting
 
-**No monitor device found**
-→ PipeWire systems don't expose monitor devices via ALSA. The interactive chooser uses `pactl` to list all PulseAudio sources including monitors — select the one ending in `.monitor`.
+**No audio being captured (macOS)**
+→ Install [BlackHole 2ch](https://github.com/ExistingApps/BlackHole) and select it in the device chooser
+→ Set your system output to BlackHole (or use a Multi-Output Device in Audio MIDI Setup to route audio to both speakers and BlackHole simultaneously)
 
-**Build fails with alsa-sys error**
-→ Install `libasound2-dev`: `sudo apt install libasound2-dev`
-
-**No audio being captured**
-→ Re-run and select a different source — make sure to pick the `.monitor` of your active output device
-→ Play some audio and check if the source status shows `RUNNING` in the chooser
+**No audio being captured (Linux)**
+→ Select the `.monitor` device for your active output in the chooser
+→ Play some audio and confirm the device is active
 
 **WLED not receiving broadcast packets**
 → Ensure WLED and this server are on the same L2 network/VLAN
 → Some AP/router isolation modes block broadcast/multicast traffic; disable client isolation
 → Confirm WLED AudioReactive is listening on UDP port `11988` (or your configured `--port`)
+
+**Build fails with alsa-sys error (Linux)**
+→ Install `libasound2-dev`: `sudo apt install libasound2-dev`
 
 **Audio dropout warnings**
 → Indicates the DSP processing cannot keep up with audio capture
@@ -153,7 +177,7 @@ cargo run --release
 ## Architecture
 
 - `src/bin/main.rs` — CLI, Ctrl+C handler, main loop, verbose logging
-- `src/audio.rs` — cpal capture, interactive source chooser, device selection, stereo→mono downmix, drop monitoring
+- `src/audio.rs` — cpal capture, interactive device chooser, device selection, stereo→mono downmix, drop monitoring
 - `src/dsp.rs` — FFT, 16 log bins, AGC, beat detection (with unit tests)
 - `src/packet.rs` — V2 packet serialization, UDP sender
 - `src/bin/test_receiver.rs` — Validation tool for V2 packet format
@@ -188,17 +212,12 @@ sudo snap install asciinema-agg   # or use /snap/bin/asciinema-agg if already in
 # 1. Build the release binary
 cargo build --release
 
-# 2. Record a cast file (runs the binary, selects the first .monitor source, streams ~4s)
+# 2. Record a cast file (runs the binary, selects the first source, streams ~4s)
 python3 record_demo.py
 
 # 3. Render to GIF
 /snap/bin/asciinema-agg demo.cast demo.gif
 ```
-
-`record_demo.py` spawns `./target/release/wled-audio-server -v`, waits for the
-interactive source chooser to appear, presses Enter to pick the first source
-(the `.monitor`), lets verbose output stream for a few seconds, then sends
-Ctrl+C. Output is written directly as an [asciinema v2](https://docs.asciinema.org/manual/asciicast/v2/) cast file.
 
 ## Development
 
