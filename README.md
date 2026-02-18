@@ -25,10 +25,17 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Build Requirements
 
+`libasound2-dev` is required **at compile time** (headers for ALSA linking):
+
 ```bash
 sudo apt install libasound2-dev
 cargo build --release
 ```
+
+## Runtime Requirements
+
+The compiled binary dynamically links `libasound.so.2` (`libasound2`), which is
+typically pre-installed on any Linux desktop.
 
 ## Usage
 
