@@ -45,6 +45,16 @@ pub fn choose_input_device() -> Option<String> {
                 if name == "null" {
                     return None;
                 }
+                // On Linux, hide low-level ALSA plugin entries that are noisy
+                // and rarely useful (hw:, plughw:, sysdefault:, front:, dsnoop:).
+                #[cfg(target_os = "linux")]
+                {
+                    const ALSA_PREFIXES: &[&str] =
+                        &["hw:", "plughw:", "sysdefault:", "front:", "dsnoop:", "surround"];
+                    if ALSA_PREFIXES.iter().any(|p| name.starts_with(p)) {
+                        return None;
+                    }
+                }
                 Some(name)
             })
             .collect()
@@ -79,7 +89,10 @@ pub fn choose_input_device() -> Option<String> {
 #[cfg(target_os = "linux")]
 fn with_stderr_suppressed<F: FnOnce() -> T, T>(f: F) -> T {
     unsafe {
-        let devnull = libc::open(b"/dev/null\0".as_ptr() as *const libc::c_char, libc::O_WRONLY);
+        let devnull = libc::open(
+            b"/dev/null\0".as_ptr() as *const libc::c_char,
+            libc::O_WRONLY,
+        );
         let saved = libc::dup(libc::STDERR_FILENO);
         libc::dup2(devnull, libc::STDERR_FILENO);
         libc::close(devnull);

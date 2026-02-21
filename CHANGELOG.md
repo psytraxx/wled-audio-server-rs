@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented in this file.
 
+## 2026-02-21
+
+- On Linux, the device chooser now hides low-level ALSA plugin entries by filtering known noisy prefixes (`hw:`, `plughw:`, `sysdefault:`, `front:`, `dsnoop:`, `surround`).
+
 ## 2026-02-18
 
 - Added macOS support via cpal/CoreAudio (use BlackHole 2ch for system audio capture).
