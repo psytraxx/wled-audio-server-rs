@@ -1,6 +1,3 @@
-#[cfg(target_os = "linux")]
-extern crate libc;
-
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BuildStreamError, Device, FromSample, InputCallbackInfo, Sample, SampleFormat, Stream};
 use dialoguer::Select;
@@ -88,18 +85,27 @@ pub fn choose_input_device() -> Option<String> {
 /// when probing devices that don't support audio input.
 #[cfg(target_os = "linux")]
 fn with_stderr_suppressed<F: FnOnce() -> T, T>(f: F) -> T {
+    use std::fs::File;
+    use std::os::unix::io::IntoRawFd;
     unsafe {
-        let devnull = libc::open(
-            b"/dev/null\0".as_ptr() as *const libc::c_char,
-            libc::O_WRONLY,
-        );
-        let saved = libc::dup(libc::STDERR_FILENO);
-        libc::dup2(devnull, libc::STDERR_FILENO);
-        libc::close(devnull);
+        // SAFETY: dup/dup2 are async-signal-safe POSIX calls on raw fds.
+        let devnull = File::open("/dev/null").unwrap().into_raw_fd();
+        let saved = libc_shim::dup(2);
+        libc_shim::dup2(devnull, 2);
+        libc_shim::close(devnull);
         let result = f();
-        libc::dup2(saved, libc::STDERR_FILENO);
-        libc::close(saved);
+        libc_shim::dup2(saved, 2);
+        libc_shim::close(saved);
         result
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod libc_shim {
+    extern "C" {
+        pub fn dup(oldfd: i32) -> i32;
+        pub fn dup2(oldfd: i32, newfd: i32) -> i32;
+        pub fn close(fd: i32) -> i32;
     }
 }
 

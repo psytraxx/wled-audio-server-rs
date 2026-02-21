@@ -5,6 +5,7 @@ All notable changes to this project are documented in this file.
 ## 2026-02-21
 
 - On Linux, the device chooser now hides low-level ALSA plugin entries by filtering known noisy prefixes (`hw:`, `plughw:`, `sysdefault:`, `front:`, `dsnoop:`, `surround`).
+- Removed `libc` crate dependency; stderr suppression now uses a minimal `extern "C"` shim for `dup`/`dup2`/`close`.
 
 ## 2026-02-18
 
