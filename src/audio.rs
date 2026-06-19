@@ -1,5 +1,6 @@
+use anyhow::{anyhow, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{BuildStreamError, Device, FromSample, InputCallbackInfo, Sample, SampleFormat, Stream};
+use cpal::{Device, Error, FromSample, InputCallbackInfo, Sample, SampleFormat, Stream};
 use dialoguer::Select;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
@@ -36,8 +37,7 @@ pub fn choose_input_device() -> Option<String> {
             .into_iter()
             .filter_map(|d| {
                 d.default_input_config().ok()?;
-                #[allow(deprecated)]
-                let name = d.name().ok()?;
+                let name = d.description().ok()?.name().to_string();
                 // Exclude the ALSA null sink — it captures silence only.
                 if name == "null" {
                     return None;
@@ -46,8 +46,14 @@ pub fn choose_input_device() -> Option<String> {
                 // and rarely useful (hw:, plughw:, sysdefault:, front:, dsnoop:).
                 #[cfg(target_os = "linux")]
                 {
-                    const ALSA_PREFIXES: &[&str] =
-                        &["hw:", "plughw:", "sysdefault:", "front:", "dsnoop:", "surround"];
+                    const ALSA_PREFIXES: &[&str] = &[
+                        "hw:",
+                        "plughw:",
+                        "sysdefault:",
+                        "front:",
+                        "dsnoop:",
+                        "surround",
+                    ];
                     if ALSA_PREFIXES.iter().any(|p| name.starts_with(p)) {
                         return None;
                     }
@@ -121,9 +127,8 @@ fn find_device(name_hint: Option<&str>) -> Option<Device> {
     if let Some(hint) = name_hint {
         let hint_lower = hint.to_lowercase();
         for dev in &devices {
-            #[allow(deprecated)]
-            if let Ok(name) = dev.name() {
-                if name.to_lowercase().contains(&hint_lower) {
+            if let Ok(desc) = dev.description() {
+                if desc.name().to_lowercase().contains(&hint_lower) {
                     return Some(dev.clone());
                 }
             }
@@ -134,9 +139,8 @@ fn find_device(name_hint: Option<&str>) -> Option<Device> {
 
     // Auto-detect: prefer device with "monitor" in the name
     for dev in &devices {
-        #[allow(deprecated)]
-        if let Ok(name) = dev.name() {
-            if name.to_lowercase().contains("monitor") {
+        if let Ok(desc) = dev.description() {
+            if desc.name().to_lowercase().contains("monitor") {
                 return Some(dev.clone());
             }
         }
@@ -158,7 +162,7 @@ fn find_device(name_hint: Option<&str>) -> Option<Device> {
 ///   - Sample rate in Hz
 ///   - Channel receiver that yields mono f32 sample chunks
 ///   - Atomic counter for dropped sample chunks (for monitoring)
-/// * `Err(String)` - Error description if device cannot be opened
+/// * `Err(_)` - Error description if device cannot be opened
 ///
 /// # Notes
 /// - Audio is automatically downmixed from stereo/multi-channel to mono
@@ -174,16 +178,18 @@ fn find_device(name_hint: Option<&str>) -> Option<Device> {
 /// while let Ok(samples) = rx.recv() {
 ///     // Process samples...
 /// }
-/// # Ok::<(), String>(())
+/// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn open_capture_stream(device_hint: Option<&str>) -> Result<CaptureStreamHandle, String> {
-    let device = find_device(device_hint).ok_or("Could not find audio device")?;
-    #[allow(deprecated)]
-    let dev_name = device.name().unwrap_or_else(|_| "<unknown>".into());
+pub fn open_capture_stream(device_hint: Option<&str>) -> Result<CaptureStreamHandle> {
+    let device = find_device(device_hint).ok_or_else(|| anyhow!("Could not find audio device"))?;
+    let dev_name = device
+        .description()
+        .map(|d| d.name().to_string())
+        .unwrap_or_else(|_| "<unknown>".into());
 
     let config = device
         .default_input_config()
-        .map_err(|e| format!("No default input config: {e}"))?;
+        .context("No default input config")?;
 
     let sample_rate = config.sample_rate();
     let channels = config.channels() as usize;
@@ -196,32 +202,30 @@ pub fn open_capture_stream(device_hint: Option<&str>) -> Result<CaptureStreamHan
 
     let stream = match config.sample_format() {
         SampleFormat::F32 => {
-            build_stream::<f32>(&device, &config.into(), channels, tx, drop_counter.clone())
+            build_stream::<f32>(&device, config.into(), channels, tx, drop_counter.clone())
         }
         SampleFormat::I16 => {
-            build_stream::<i16>(&device, &config.into(), channels, tx, drop_counter.clone())
+            build_stream::<i16>(&device, config.into(), channels, tx, drop_counter.clone())
         }
         SampleFormat::U16 => {
-            build_stream::<u16>(&device, &config.into(), channels, tx, drop_counter.clone())
+            build_stream::<u16>(&device, config.into(), channels, tx, drop_counter.clone())
         }
-        fmt => return Err(format!("Unsupported sample format: {fmt:?}")),
+        fmt => return Err(anyhow!("Unsupported sample format: {fmt:?}")),
     }
-    .map_err(|e| format!("Failed to build stream: {e}"))?;
+    .context("Failed to build stream")?;
 
-    stream
-        .play()
-        .map_err(|e| format!("Failed to start stream: {e}"))?;
+    stream.play().context("Failed to start stream")?;
 
     Ok((stream, sample_rate, rx, drop_counter))
 }
 
 fn build_stream<T: cpal::SizedSample + Send + 'static>(
     device: &Device,
-    config: &cpal::StreamConfig,
+    config: cpal::StreamConfig,
     channels: usize,
     tx: SyncSender<Vec<f32>>,
     drop_counter: Arc<AtomicU64>,
-) -> Result<Stream, BuildStreamError>
+) -> Result<Stream, Error>
 where
     f32: FromSample<T>,
 {

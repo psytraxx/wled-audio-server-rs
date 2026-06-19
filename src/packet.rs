@@ -1,6 +1,6 @@
+use anyhow::{anyhow, Context, Result};
 use if_addrs::{get_if_addrs, IfAddr};
 use std::collections::HashSet;
-use std::io::{Error, Result};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 
 /// V2 AudioSync packet for WLED AudioReactive (44 bytes, little-endian).
@@ -101,10 +101,12 @@ impl UdpSender {
     ///
     /// # Returns
     /// * `Ok(UdpSender)` - Ready-to-use sender with frame counter initialized to 0
-    /// * `Err(io::Error)` - If socket setup fails
+    /// * `Err(_)` - If socket setup fails
     pub fn new(port: u16) -> Result<Self> {
-        let socket = UdpSocket::bind("0.0.0.0:0")?;
-        socket.set_broadcast(true)?;
+        let socket = UdpSocket::bind("0.0.0.0:0").context("Failed to bind UDP socket")?;
+        socket
+            .set_broadcast(true)
+            .context("Failed to enable broadcast")?;
         let targets = discover_broadcast_targets(port);
         Ok(Self {
             socket,
@@ -126,7 +128,7 @@ impl UdpSender {
     ///
     /// # Returns
     /// * `Ok(())` - Packet sent successfully
-    /// * `Err(io::Error)` - If UDP transmission fails
+    /// * `Err(_)` - If UDP transmission fails
     pub fn send(&mut self, packet: &AudioSyncPacketV2) -> Result<()> {
         let bytes = packet.to_bytes(self.frame_counter);
         let mut last_error = None;
@@ -140,9 +142,10 @@ impl UdpSender {
         }
 
         if !any_sent {
-            return Err(
-                last_error.unwrap_or_else(|| Error::other("No broadcast targets available"))
-            );
+            return match last_error {
+                Some(e) => Err(anyhow::Error::new(e).context("Failed to send to all targets")),
+                None => Err(anyhow!("No broadcast targets available")),
+            };
         }
 
         self.frame_counter = self.frame_counter.wrapping_add(1);

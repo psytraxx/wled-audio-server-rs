@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use clap::Parser;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
@@ -22,7 +23,7 @@ struct Args {
     verbose: bool,
 }
 
-fn main() {
+fn main() -> Result<()> {
     let args = Args::parse();
 
     // Ctrl+C handler
@@ -31,28 +32,16 @@ fn main() {
     ctrlc::set_handler(move || {
         r.store(false, Ordering::SeqCst);
     })
-    .expect("Failed to set Ctrl+C handler");
+    .context("Failed to set Ctrl+C handler")?;
 
     let device_hint = choose_input_device();
 
     // Open audio capture
-    let (_stream, sample_rate, rx, drop_counter) = match open_capture_stream(device_hint.as_deref())
-    {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("Error: {e}");
-            std::process::exit(1);
-        }
-    };
+    let (_stream, sample_rate, rx, drop_counter) =
+        open_capture_stream(device_hint.as_deref()).context("Failed to open audio capture")?;
 
     // UDP sender
-    let mut sender = match UdpSender::new(args.port) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Error creating UDP socket: {e}");
-            std::process::exit(1);
-        }
-    };
+    let mut sender = UdpSender::new(args.port).context("Failed to create UDP sender")?;
 
     let targets = sender
         .targets()
@@ -148,4 +137,6 @@ fn main() {
     }
 
     println!("\nShutting down.");
+
+    Ok(())
 }

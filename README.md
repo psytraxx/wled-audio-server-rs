@@ -82,6 +82,36 @@ On Linux, all ALSA/PipeWire input devices are listed. On macOS, CoreAudio input 
 
 Use arrow keys to select, Enter to confirm.
 
+### Capturing application audio on Linux (e.g. music playing in Chrome)
+
+By default the server captures a real **input** device. On PipeWire/PulseAudio that
+is usually a microphone (such as a webcam mic), *not* what an app is playing out.
+To capture the audio coming out of Chrome (or any app), point the server at the
+**`.monitor`** source of your active output sink — this is a loopback of whatever
+is currently playing.
+
+1. List your sources and find the default output sink:
+
+   ```bash
+   pactl list short sources
+   pactl get-default-sink
+   ```
+
+   Monitor sources end in `.monitor`, e.g.
+   `alsa_output.usb-Creative_Technology_..._analog-stereo.monitor`.
+
+2. Force the server to use that monitor via the `PULSE_SOURCE` env var:
+
+   ```bash
+   PULSE_SOURCE=alsa_output.usb-Creative_Technology_..._analog-stereo.monitor \
+     cargo run --release
+   ```
+
+`PULSE_SOURCE` is the reliable route on PipeWire because monitor sources often do
+not enumerate through ALSA/cpal, so they may not appear in the interactive chooser.
+If your output's monitor *does* appear in the chooser, you can select it there
+with the `-d`/device flag instead.
+
 ## CLI Options
 
 ```
@@ -159,6 +189,11 @@ cargo run --release
 **No audio being captured (Linux)**
 → Select the `.monitor` device for your active output in the chooser
 → Play some audio and confirm the device is active
+
+**Capturing app audio but getting the mic instead (Linux)**
+→ You're capturing a real input (e.g. a webcam mic) instead of playback audio
+→ Set `PULSE_SOURCE` to your output sink's `.monitor` source — see
+  [Capturing application audio on Linux](#capturing-application-audio-on-linux-eg-music-playing-in-chrome)
 
 **WLED not receiving broadcast packets**
 → Ensure WLED and this server are on the same L2 network/VLAN
