@@ -108,9 +108,21 @@ is currently playing.
    ```
 
 `PULSE_SOURCE` is the reliable route on PipeWire because monitor sources often do
-not enumerate through ALSA/cpal, so they may not appear in the interactive chooser.
-If your output's monitor *does* appear in the chooser, you can select it there
-with the `-d`/device flag instead.
+not enumerate through ALSA/cpal under their own name. Instead, cpal exposes a
+generic **"PulseAudio Sound Server"** (or "PipeWire Sound Server") entry in the
+chooser — select that, and `PULSE_SOURCE` determines which real source it
+actually reads from.
+
+A helper script that does this automatically for the current default output
+sink is included at [`scripts/stream-chrome-audio.sh`](scripts/stream-chrome-audio.sh):
+
+```bash
+./scripts/stream-chrome-audio.sh
+```
+
+It resolves `pactl get-default-sink`, appends `.monitor`, exports
+`PULSE_SOURCE`, and runs `cargo run --release`. When the picker appears,
+choose "PulseAudio Sound Server".
 
 ## CLI Options
 

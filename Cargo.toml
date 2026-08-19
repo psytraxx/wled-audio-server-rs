@@ -8,7 +8,7 @@ default-run = "wled-audio-server"
 anyhow = "1.0"
 cpal = "0.18.1"
 rustfft = "6.4"
-clap = { version = "4.6.1", features = ["derive"] }
+clap = { version = "4.6.6", features = ["derive"] }
 ctrlc = "3.5.2"
 if-addrs = "0.15.0"
 dialoguer = "0.12.0"
